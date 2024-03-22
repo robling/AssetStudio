@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace AssetStudio
@@ -118,10 +119,26 @@ namespace AssetStudio
             }
             return flatList.ToArray();
         }
-        
-        private static string ConvertPrograms(SerializedProgram program, string programType, ShaderCompilerPlatform[] platforms, ShaderProgram[] shaderPrograms, int indent)
+
+        private static string ConvertPrograms(Dictionary<int, string> name_map, SerializedProgram program, string programType, ShaderCompilerPlatform[] platforms, ShaderProgram[] shaderPrograms, int indent)
         {
             var sb = new StringBuilder();
+            if (program?.m_CommonParameters != null)
+            {
+                foreach (var item in program.m_CommonParameters.m_TextureParams)
+                {
+                    sb.Append("Textures:\n", indent);
+                    sb.Append("t ", indent + 1);
+                    sb.Append(item.m_Index);
+                    sb.Append("\t: ");
+                    sb.Append(name_map[item.m_NameIndex]);
+                    sb.Append("\n");
+                }
+            }
+            if (program?.m_CommonParameters != null)
+            {
+                ConvertConstantBuffer(name_map, program, programType, indent, sb);
+            }
             if (program?.m_SubPrograms.Length > 0)
             {
                 sb.Append($"Program \"{programType}\" {{\n", indent);
@@ -137,7 +154,46 @@ namespace AssetStudio
             }
             return sb.ToString();
         }
-        
+
+        private static void ConvertConstantBuffer(Dictionary<int, string> name_map, SerializedProgram program, string programType, int indent, StringBuilder sb)
+        {
+            sb.Append($"Parameters \"{programType}\" {{\n", indent);
+
+            // var str = JsonSerializer.Serialize(program.m_CommonParameters, jop);
+            // sb.Append(str, indent);
+
+            var cb_bind = new Dictionary<int, string>();
+            foreach (var item in program.m_CommonParameters.m_ConstantBufferBindings)
+            {
+                cb_bind[item.m_NameIndex] = "cb" + item.m_Index;
+            }
+
+            var cb_map = new Dictionary<string, string>();
+            foreach (var item in program.m_CommonParameters.m_ConstantBuffers)
+            {
+                var cb_name = name_map[item.m_NameIndex];
+                var cb_code_name = cb_bind[item.m_NameIndex];
+
+                sb.Append($"{cb_code_name} : {cb_name}\n", indent + 1);
+                foreach (var matrix in item.m_MatrixParams)
+                {
+                    var base_offset = matrix.m_Index / 16;
+                    var name = $"{cb_code_name}[{base_offset}][{base_offset + 1}][{base_offset + 2}][{base_offset + 3}]";
+                    var variable_name = name_map[matrix.m_NameIndex];
+                    sb.Append($"{name} : {variable_name}\n", indent + 2);
+                }
+                foreach (var vector in item.m_VectorParams)
+                {
+                    var base_offset = vector.m_Index / 16;
+                    var name = $"{cb_code_name}[{base_offset}]";
+                    var variable_name = name_map[vector.m_NameIndex];
+                    sb.Append($"{name} : {variable_name}\n", indent + 2);
+                }
+            }
+
+            sb.Append("}\n", indent);
+        }
+
         private static string ConvertSerializedPass(SerializedPass m_Passe, ShaderCompilerPlatform[] platforms, ShaderProgram[] shaderPrograms, int indent)
         {
             var sb = new StringBuilder();
@@ -172,13 +228,19 @@ namespace AssetStudio
                 else
                 {
                     sb.Append(ConvertSerializedShaderState(m_Passe.m_State, indent + 1));
+                    // sb.Append(ConvertSerializedShaderNameIndices(m_Passe.m_NameIndices, indent + 1));
+                    var dic = new Dictionary<int, string>();
+                    foreach (var i in m_Passe.m_NameIndices)
+                    {
+                        dic[i.Value] = i.Key;
+                    }
 
-                    sb.Append(ConvertPrograms(m_Passe.progVertex, "vp", platforms, shaderPrograms, indent + 1));
-                    sb.Append(ConvertPrograms(m_Passe.progFragment, "fp", platforms, shaderPrograms, indent + 1));
-                    sb.Append(ConvertPrograms(m_Passe.progGeometry, "gp", platforms, shaderPrograms, indent + 1));
-                    sb.Append(ConvertPrograms(m_Passe.progHull, "hp", platforms, shaderPrograms, indent + 1));
-                    sb.Append(ConvertPrograms(m_Passe.progDomain, "dp", platforms, shaderPrograms, indent + 1));
-                    sb.Append(ConvertPrograms(m_Passe.progRayTracing, "rtp", platforms, shaderPrograms, indent + 1));
+                    sb.Append(ConvertPrograms(dic, m_Passe.progVertex, "vp", platforms, shaderPrograms, indent + 1));
+                    sb.Append(ConvertPrograms(dic, m_Passe.progFragment, "fp", platforms, shaderPrograms, indent + 1));
+                    sb.Append(ConvertPrograms(dic, m_Passe.progGeometry, "gp", platforms, shaderPrograms, indent + 1));
+                    sb.Append(ConvertPrograms(dic, m_Passe.progHull, "hp", platforms, shaderPrograms, indent + 1));
+                    sb.Append(ConvertPrograms(dic, m_Passe.progDomain, "dp", platforms, shaderPrograms, indent + 1));
+                    sb.Append(ConvertPrograms(dic, m_Passe.progRayTracing, "rtp", platforms, shaderPrograms, indent + 1));
                 }
                 sb.Append("}\n", indent);
             }
@@ -249,13 +311,32 @@ namespace AssetStudio
                 x => x.m_GpuProgramType);
         }
 
+        private static string Add_SerializedSubProgram(SerializedSubProgram sbp)
+        {
+            var str = JsonSerializer.Serialize(sbp.m_Parameters);
+            return str;
+        }
         private static string ConvertSerializedSubPrograms(SerializedSubProgram[] m_SubPrograms,
             ShaderCompilerPlatform[] platforms, ShaderProgram[] shaderPrograms, int indent)
         {
             return ConvertSubPrograms(m_SubPrograms, platforms, shaderPrograms, indent, x => x.m_BlobIndex,
-                x => x.m_GpuProgramType, x => $"hw_tier{x.m_ShaderHardwareTier:00}");
+                x => x.m_GpuProgramType, x => $"hw_tier{x.m_ShaderHardwareTier:00}\n" + Add_SerializedSubProgram(x));
         }
 
+        private static string ConvertSerializedShaderNameIndices(KeyValuePair<string, int>[] names, int indent)
+        {
+            var sb = new StringBuilder();
+            sb.Append("m_NameIndices:\n", indent);
+            indent += 1;
+            foreach(var name in names)
+            {
+                sb.Append(name.Key, indent);
+                sb.Append("\t\t: ");
+                sb.Append(name.Value);
+                sb.Append('\n');
+            }
+            return sb.ToString();
+        }
         private static string ConvertSerializedShaderState(SerializedShaderState m_State, int indent)
         {
             var sb = new StringBuilder();
@@ -1046,6 +1127,36 @@ namespace AssetStudio
             //TODO
         }
 
+        public static string ConvertDxbc_diassemble(byte[] buf)
+        {
+            var result = DXBC.GetDXBCDiassembleText(buf);
+            return result;
+        }
+
+        public static string ConvertDxbc(byte[] buf)
+        {
+            //var str = Convert.ToHexString(buf);
+            //var buf2 = Convert.FromHexString(str);
+
+            //if (buf2.Length == buf.Length)
+            //{
+            //    for (int i = 0; i < buf.Length; i++)
+            //    {
+            //        if (buf[i] != buf2[i])
+            //        {
+            //            Console.WriteLine("dxbc code not equal");
+            //            break;
+            //        }
+            //    }
+            //}
+            //else
+            //{
+            //    Console.WriteLine("dxbc code not equal");
+            //}
+
+            return ConvertDxbc_diassemble(buf);
+        }
+
         public string Export()
         {
             var sb = new StringBuilder();
@@ -1088,9 +1199,10 @@ namespace AssetStudio
                     case ShaderGpuProgramType.DX9PixelSM20:
                     case ShaderGpuProgramType.DX9PixelSM30:
                         {
+                            sb.Append(ConvertDxbc(m_ProgramCode));
                             /*var shaderBytecode = new ShaderBytecode(m_ProgramCode);
                             sb.Append(shaderBytecode.Disassemble());*/
-                            sb.Append("// shader disassembly not supported on DXBC");
+                            // sb.Append("// shader disassembly not supported on DXBC");
                             break;
                         }
                     case ShaderGpuProgramType.DX10Level9Vertex:
@@ -1104,16 +1216,19 @@ namespace AssetStudio
                     case ShaderGpuProgramType.DX11HullSM50:
                     case ShaderGpuProgramType.DX11DomainSM50:
                         {
-                            /*int start = 6;
-                            if (m_Version == 201509030) // 5.3
-                            {
-                                start = 5;
-                            }
-                            var buff = new byte[m_ProgramCode.Length - start];
-                            Buffer.BlockCopy(m_ProgramCode, start, buff, 0, buff.Length);
-                            var shaderBytecode = new ShaderBytecode(buff);
+                            //int start = 6;
+                            //if (m_Version == 201509030) // 5.3
+                            //{
+                            //    start = 5;
+                            //}
+                            //var buff = new byte[m_ProgramCode.Length - start];
+                            //Buffer.BlockCopy(m_ProgramCode, start, buff, 0, buff.Length);
+                            
+                            //sb.Append(ConvertDxbc(buff));
+                            sb.Append(ConvertDxbc(m_ProgramCode));
+                            /*var shaderBytecode = new ShaderBytecode(buff);
                             sb.Append(shaderBytecode.Disassemble());*/
-                            sb.Append("// shader disassembly not supported on DXBC");
+                            // sb.Append("// shader disassembly not supported on DXBC");
                             break;
                         }
                     case ShaderGpuProgramType.MetalVS:
