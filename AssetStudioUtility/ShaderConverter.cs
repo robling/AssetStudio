@@ -128,7 +128,7 @@ namespace AssetStudio
                 foreach (var item in program.m_CommonParameters.m_TextureParams)
                 {
                     sb.Append("Textures:\n", indent);
-                    sb.Append("t ", indent + 1);
+                    sb.Append("t", indent + 1);
                     sb.Append(item.m_Index);
                     sb.Append("\t: ");
                     sb.Append(name_map[item.m_NameIndex]);
