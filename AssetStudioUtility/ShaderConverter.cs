@@ -123,21 +123,14 @@ namespace AssetStudio
         private static string ConvertPrograms(Dictionary<int, string> name_map, SerializedProgram program, string programType, ShaderCompilerPlatform[] platforms, ShaderProgram[] shaderPrograms, int indent)
         {
             var sb = new StringBuilder();
+            Dictionary<string, string> code_note_mapper = new Dictionary<string, string>();
             if (program?.m_CommonParameters != null)
             {
-                foreach (var item in program.m_CommonParameters.m_TextureParams)
-                {
-                    sb.Append("Textures:\n", indent);
-                    sb.Append("t", indent + 1);
-                    sb.Append(item.m_Index);
-                    sb.Append("\t: ");
-                    sb.Append(name_map[item.m_NameIndex]);
-                    sb.Append("\n");
-                }
+                ConvertTextureBindings(name_map, program, indent, sb, code_note_mapper);
             }
             if (program?.m_CommonParameters != null)
             {
-                ConvertConstantBuffer(name_map, program, programType, indent, sb);
+                ConvertConstantBuffer(name_map, program, programType, indent, sb, code_note_mapper);
             }
             if (program?.m_SubPrograms.Length > 0)
             {
@@ -155,7 +148,24 @@ namespace AssetStudio
             return sb.ToString();
         }
 
-        private static void ConvertConstantBuffer(Dictionary<int, string> name_map, SerializedProgram program, string programType, int indent, StringBuilder sb)
+        private static void ConvertTextureBindings(Dictionary<int, string> name_map, SerializedProgram program, int indent, StringBuilder sb, Dictionary<string, string> code_note_mapper)
+        {
+            foreach (var item in program.m_CommonParameters.m_TextureParams)
+            {
+                sb.Append("Textures:\n", indent);
+                sb.Append("t", indent + 1);
+                sb.Append(item.m_Index);
+                sb.Append("\t: ");
+                sb.Append(name_map[item.m_NameIndex]);
+                sb.Append("\n");
+
+                code_note_mapper.Add($"t{item.m_Index}.Sample", name_map[item.m_NameIndex]);
+            }
+        }
+
+        private static char[] swizz_char = new char[] {'x', 'y','z', 'w'};
+        
+        private static void ConvertConstantBuffer(Dictionary<int, string> name_map, SerializedProgram program, string programType, int indent, StringBuilder sb, Dictionary<string, string> code_note_mapper)
         {
             sb.Append($"Parameters \"{programType}\" {{\n", indent);
 
@@ -181,11 +191,26 @@ namespace AssetStudio
                     var name = $"{cb_code_name}[{base_offset}][{base_offset + 1}][{base_offset + 2}][{base_offset + 3}]";
                     var variable_name = name_map[matrix.m_NameIndex];
                     sb.Append($"{name} : {variable_name}\n", indent + 2);
+                    code_note_mapper.Add($"{name}", variable_name);
                 }
                 foreach (var vector in item.m_VectorParams)
                 {
                     var base_offset = vector.m_Index / 16;
-                    var name = $"{cb_code_name}[{base_offset}]";
+                    var swizz = (vector.m_Index % 16) / 4;
+                    var remains = (vector.m_Index % 16) % 4;
+                    string name = "";
+                    if (swizz == 0)
+                    {
+                        name = $"{cb_code_name}[{base_offset}]";
+                    }
+                    else if (swizz > 0 && swizz < 4 && remains == 0)
+                    {
+                        name = $"{cb_code_name}[{base_offset}].{swizz_char[swizz]}";
+                    }
+                    else
+                    {
+                        name = $"{cb_code_name}[{base_offset}]+{vector.m_Index % 16}";
+                    }
                     var variable_name = name_map[vector.m_NameIndex];
                     sb.Append($"{name} : {variable_name}\n", indent + 2);
                 }
